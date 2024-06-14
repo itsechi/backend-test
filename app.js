@@ -1,62 +1,21 @@
-// var createError = require('http-errors');
-// var express = require('express');
-// var path = require('path');
-// var cookieParser = require('cookie-parser');
-// var logger = require('morgan');
-
-// var indexRouter = require('./routes/index');
-// var usersRouter = require('./routes/users');
-
-// var app = express();
-
-// // view engine setup
-// app.set('views', path.join(__dirname, 'views'));
-// app.set('view engine', 'jade');
-
-// app.use(logger('dev'));
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: false }));
-// app.use(cookieParser());
-// app.use(express.static(path.join(__dirname, 'public')));
-
-// app.use('/', indexRouter);
-// app.use('/users', usersRouter);
-
-// // catch 404 and forward to error handler
-// app.use(function(req, res, next) {
-//   next(createError(404));
-// });
-
-// // error handler
-// app.use(function(err, req, res, next) {
-//   // set locals, only providing error in development
-//   res.locals.message = err.message;
-//   res.locals.error = req.app.get('env') === 'development' ? err : {};
-
-//   // render the error page
-//   res.status(err.status || 500);
-//   res.render('error');
-// });
-
-// module.exports = app;
-
 require("dotenv").config();
 const express = require("express");
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const session = require("express-session");
+const jwt = require("jsonwebtoken");
 const cors = require("cors");
 
 const app = express();
 const PORT = 5000;
+const JWT_SECRET = "your_jwt_secret"; // Replace with your secret
 
 // Configure CORS
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: "http://localhost:5173", // Change this to your frontend URL
+  credentials: true,
+};
+app.use(cors(corsOptions));
 
 // Session setup
 app.use(
@@ -64,6 +23,11 @@ app.use(
     secret: "your_secret_key",
     resave: false,
     saveUninitialized: true,
+    // cookie: {
+    //   secure: true, // true if using HTTPS
+    //   httpOnly: true,
+    //   sameSite: "none", // required for cross-domain cookies
+    // },
   })
 );
 
@@ -79,8 +43,14 @@ passport.use(
       callbackURL: process.env.CALLBACK_URL,
     },
     function (accessToken, refreshToken, profile, done) {
-      // Here, you would normally save the user to the database
-      return done(null, profile);
+      // Create a JWT token
+      const token = jwt.sign(
+        { id: profile.id, displayName: profile.displayName },
+        JWT_SECRET,
+        { expiresIn: "1h" }
+      );
+      console.log(token);
+      return done(null, { profile, token });
     }
   )
 );
@@ -105,22 +75,28 @@ app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/" }),
   (req, res) => {
-    res.redirect(process.env.CLIENT_URL); // Redirect to your frontend URL
+    // Send the token to the frontend
+    res.redirect(`http://localhost:5173/?token=${req.user.token}`);
   }
 );
 
 app.get("/api/user", (req, res) => {
-  // if (req.isAuthenticated()) {
-  res.json(req.user);
-  // } else {
-  //   res.status(401).json({ error: "User not authenticated" });
-  // }
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ error: "Token is invalid or expired" });
+    }
+    res.json({ id: decoded.id, displayName: decoded.displayName });
+  });
 });
 
 app.get("/logout", (req, res) => {
-  req.logout((err) => {
-    if (err) console.error(`Error logging out the user: ${err}`);
-    res.redirect(process.env.CLIENT_URL);
+  req.logout(() => {
+    res.redirect("http://localhost:5173");
   });
 });
 
